@@ -115,6 +115,8 @@ END
                             [ '-Q', '--literal', GetoptLong::NO_ARGUMENT ],
                             [ '-o', GetoptLong::NO_ARGUMENT ],
                             [ '-w', '--word-regexp', GetoptLong::NO_ARGUMENT ],
+                            [ '--pager', GetoptLong::REQUIRED_ARGUMENT ],
+                            [ '--nopager', GetoptLong::NO_ARGUMENT ],
                             [ '--group', GetoptLong::NO_ARGUMENT ],
                             [ '--nogroup', GetoptLong::NO_ARGUMENT ],
                             [ '-l', '--files-with-matches', GetoptLong::NO_ARGUMENT ],
@@ -158,6 +160,8 @@ END
     opt[:match_whole_lines] = false
     opt[:match_line_starts] = false
     opt[:match_line_ends] = false
+    opt[:pager] = nil
+    opt[:nopager] = false
     opt[:print_file_each_line] = false
     opt[:print_file_if_match] = false
     opt[:print_file_if_no_match] = false
@@ -227,6 +231,10 @@ END
           opt[:print_highlighted] = false
         when '-w'
           opt[:match_whole_words] = true
+        when '--pager'
+          opt[:pager] = arg.to_s
+        when '--nopager'
+          opt[:nopager] = true
         when '--group'
           opt[:print_filename] = true
           opt[:print_file_each_line] = false
@@ -321,6 +329,7 @@ END
       MATCH_COLOUR.replace ""
     end
 
+    run_pager(opt[:pager])  unless opt[:nopager]
     print_files(files)      if opt[:print_filelist]
     search2(ARGV[0], files) if opt[:do_search]
   end
@@ -696,6 +705,34 @@ END
     puts "rak: See rak --help types"
     exit
   end
+
+  def self.run_pager(opt_pager = nil)
+    return if PLATFORM =~ /win32/
+    return unless STDOUT.tty?
+
+    read, write = IO.pipe
+
+    unless Kernel.fork # Child process
+      STDOUT.reopen(write)
+      STDERR.reopen(write) if STDERR.tty?
+      read.close
+      write.close
+      return
+    end
+
+    # Parent process, become pager
+    STDIN.reopen(read)
+    read.close
+    write.close
+
+    ENV['LESS'] = 'FSRX' # Don't page if the input is short enough
+
+    # wait until we have input before we start the pager
+    Kernel.select [STDIN]
+    pager = opt_pager || ENV['PAGER'] || 'less -r'
+    exec pager rescue exec "/bin/sh", "-c", pager
+  rescue
+  end
 end
 
 USAGE_HELP=<<END
@@ -730,6 +767,10 @@ Search output:
   -H, --with-filename   Print the filename for each match
   -h, --no-filename     Suppress the prefixing filename on output
   -c, --count           Show number of lines matching per file
+
+  --pager=COMMAND       Pipes all rak output through COMMAND.
+                        (default: ENV['PAGER'] or "less -r")
+  --nopager             Do not send output through a pager.
 
   --group               Group matches by file name.
                         (default: on when used interactively)
